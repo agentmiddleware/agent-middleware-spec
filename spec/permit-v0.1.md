@@ -36,19 +36,9 @@ signed before a member existed keep verifying.
 | `allow_identical_repeats`, `repeat_window_seconds` | Repeat-call policy |
 | `action_*` | Binding of the permit to one typed action contract (all six members present together, or none) |
 
-Mutable server state (credits spent, per-tool counters) is deliberately **not**
-signed; it is enforced by the gateway's atomic budget update.
+Spend state is not part of the signed permit.
 
-## Validation (gateway side)
-
-A call is accepted only if the permit signature verifies, the permit is not
-revoked or expired, the tool is in `allowed_tools`, the calling key matches
-`subject_key_id` when bound, and the call fits the remaining budget and per-tool
-caps. All of this is evaluated **before** any debit or dispatch; a denial
-produces a `denied` receipt and no debit.
-
-The Python SDK can rebuild and verify a permit's signing payload offline:
-`b2a_sdk.edge_client` (`permit_signing_payload`, `verify_permit`).
+An issuer only signs permits it will honor.
 
 ## Example (signed bytes from a test fixture)
 
