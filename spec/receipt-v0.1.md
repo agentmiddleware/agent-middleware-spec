@@ -16,6 +16,10 @@ permit and an idempotency key.
 }
 ```
 
+For a `signing_input` over 4096 bytes, `signature` may instead be
+`Ed25519-sha256-envelope:<base64>`, a signature over a summary record of the
+payload's SHA-256. See [`README.md`](README.md#summary-record-signing_input-over-4096-bytes).
+
 Everything outside `signing_input` and `signature` is an unauthenticated
 envelope. A verifier reads every claim from the signed payload and treats any
 envelope value that disagrees with it as a `mismatch`.

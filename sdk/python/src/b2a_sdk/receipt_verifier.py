@@ -42,11 +42,15 @@ from typing import Any
 
 __all__ = [
     "CANONICALIZATION",
+    "SUMMARY_RECORD_ALG",
+    "SUMMARY_RECORD_THRESHOLD_BYTES",
     "VerificationError",
     "VerificationResult",
     "VerificationStatus",
     "canonical_json",
     "key_set_from_document",
+    "signature_message",
+    "split_signature",
     "verify_bundle",
     "verify_ed25519",
 ]
@@ -58,6 +62,16 @@ CANONICALIZATION = "awi-canonical-json/1"
 
 _ED25519_RAW_LEN = 32
 _ED25519_SIGNATURE_LEN = 64
+
+# Summary record. An issuer may sign a signing_input over the threshold
+# indirectly: the pure Ed25519 signature covers the canonical bytes of
+# ``{alg, kid, payload_sha256}`` and is tagged ``Ed25519-sha256-envelope:``.
+# An untagged signature is pure Ed25519 over signing_input at any size. The
+# summary form is accepted only above the threshold, so a small receipt has
+# exactly one valid signature form.
+SIGNATURE_ALG = "Ed25519"
+SUMMARY_RECORD_ALG = "Ed25519-sha256-envelope"
+SUMMARY_RECORD_THRESHOLD_BYTES = 4096
 
 
 class VerificationStatus(str, Enum):
@@ -286,6 +300,35 @@ def verify_ed25519(
     return _verify_ed25519_signature(raw_public_key, signature, signing_bytes)
 
 
+def split_signature(value: str) -> tuple[str, str]:
+    """Return ``(scheme, base64)`` for a signature string.
+
+    Standard base64 has no ``:``, so an untagged signature is unambiguous.
+    """
+    scheme, separator, encoded = value.partition(":")
+    if not separator:
+        return SIGNATURE_ALG, value
+    return scheme, encoded
+
+
+def signature_message(scheme: str, kid: str, signing_bytes: bytes) -> bytes | None:
+    """The bytes a signature of ``scheme`` covers, or None if it cannot apply.
+
+    None for an unknown scheme, and for a summary record over a signing_input
+    small enough to have been signed directly (no downgrade confusion).
+    """
+    if scheme == SIGNATURE_ALG:
+        return signing_bytes
+    if scheme == SUMMARY_RECORD_ALG and len(signing_bytes) > SUMMARY_RECORD_THRESHOLD_BYTES:
+        summary = {
+            "alg": SUMMARY_RECORD_ALG,
+            "kid": kid,
+            "payload_sha256": hashlib.sha256(signing_bytes).hexdigest(),
+        }
+        return canonical_json(summary).encode("utf-8")
+    return None
+
+
 def _fail(
     status: VerificationStatus,
     reason: str,
@@ -416,7 +459,17 @@ def verify_bundle(
             key_id=key_id,
         )
 
-    signature = _b64decode(signature_b64)
+    signature_scheme, encoded_signature = split_signature(signature_b64)
+    if encoded_signature != signature_b64 and signature_scheme != SUMMARY_RECORD_ALG:
+        # The summary-record tag is the only one defined; a direct signature is
+        # always untagged. The tag sits outside the signed bytes, so an unknown
+        # one is a damaged signature field, not a statement about this verifier.
+        return _fail(
+            VerificationStatus.MALFORMED,
+            f"unknown signature scheme: {signature_scheme!r}",
+            key_id=key_id,
+        )
+    signature = _b64decode(encoded_signature)
     if signature is None:
         return _fail(
             VerificationStatus.MALFORMED,
@@ -445,6 +498,8 @@ def verify_bundle(
                 probe_bytes = signing_input.encode("utf-8")
             except UnicodeEncodeError:
                 probe_bytes = None
+            if probe_bytes is not None:
+                probe_bytes = signature_message(signature_scheme, envelope_key_id, probe_bytes)
             if probe_bytes is not None and _verify_ed25519_signature(
                 envelope_key, signature, probe_bytes
             ):
@@ -477,10 +532,18 @@ def verify_bundle(
             key_id=key_id,
         )
 
-    # The signature covers signing_input verbatim. Re-serializing the parsed
-    # object here would silently "fix" a payload whose bytes were altered in a
-    # way that survives a JSON round trip, so the original string is used.
-    if not _verify_ed25519_signature(raw_public_key, signature, signing_bytes):
+    # The signature covers signing_input verbatim (or, for a summary record,
+    # its SHA-256). Re-serializing the parsed object here would silently "fix"
+    # a payload whose bytes were altered in a way that survives a JSON round
+    # trip, so the original string is used.
+    signed_message = signature_message(signature_scheme, key_id, signing_bytes)
+    if signed_message is None:
+        return _fail(
+            VerificationStatus.MISMATCH,
+            "summary record signature on a signing_input small enough to sign directly",
+            key_id=key_id,
+        )
+    if not _verify_ed25519_signature(raw_public_key, signature, signed_message):
         return _fail(
             VerificationStatus.INVALID,
             "signature does not verify over signing_input",
