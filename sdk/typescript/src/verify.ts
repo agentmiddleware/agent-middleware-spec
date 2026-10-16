@@ -11,6 +11,9 @@
 import { createHash, createPublicKey, verify as edVerify } from "node:crypto";
 
 export const CANONICALIZATION = "awi-canonical-json/1";
+/** Signature tag for the summary record; see spec/README.md. */
+export const SUMMARY_RECORD_ALG = "Ed25519-sha256-envelope";
+export const SUMMARY_RECORD_THRESHOLD_BYTES = 4096;
 
 export type VerificationStatus =
   | "verified"
@@ -93,6 +96,26 @@ function edOk(raw: Buffer, sig: Buffer, msg: Buffer): boolean {
   }
 }
 
+/** Return [scheme, base64]. Standard base64 has no ":", so untagged is unambiguous. */
+export function splitSignature(value: string): [string, string] {
+  const i = value.indexOf(":");
+  return i < 0 ? ["Ed25519", value] : [value.slice(0, i), value.slice(i + 1)];
+}
+
+/**
+ * The bytes a signature of `scheme` covers, or null when it cannot apply:
+ * an unknown scheme, or a summary record over a signing_input small enough
+ * to have been signed directly (no downgrade confusion).
+ */
+export function signatureMessage(scheme: string, kid: string, signingBytes: Buffer): Buffer | null {
+  if (scheme === "Ed25519") return signingBytes;
+  if (scheme === SUMMARY_RECORD_ALG && signingBytes.length > SUMMARY_RECORD_THRESHOLD_BYTES) {
+    const payloadSha256 = createHash("sha256").update(signingBytes).digest("hex");
+    return Buffer.from(canonicalJson({ alg: SUMMARY_RECORD_ALG, kid, payload_sha256: payloadSha256 }), "utf8");
+  }
+  return null;
+}
+
 /** Verify one portable receipt bundle against a caller-supplied key set. */
 export function verifyBundle(bundle: unknown, keySet: KeySet, expectedIssuer?: string): VerificationResult {
   if (!bundle || typeof bundle !== "object" || Array.isArray(bundle)) return fail("malformed", "bundle must be a JSON object");
@@ -120,7 +143,9 @@ export function verifyBundle(bundle: unknown, keySet: KeySet, expectedIssuer?: s
   const signedCanon = p.canonicalization;
   if (typeof signedCanon === "string" && signedCanon !== CANONICALIZATION) return fail("unsupported", `unsupported canonicalization: ${signedCanon}`, kid);
 
-  const sig = b64(sigB64);
+  const [scheme, sigPart] = splitSignature(sigB64);
+  if (sigPart !== sigB64 && scheme !== SUMMARY_RECORD_ALG) return fail("malformed", `unknown signature scheme: ${scheme}`, kid);
+  const sig = b64(sigPart);
   if (!sig) return fail("malformed", "signature is not valid base64", kid);
   if (sig.length !== SIG_LEN) return fail("malformed", "signature is not a 64-byte Ed25519 signature", kid);
   const msg = Buffer.from(signingInput, "utf8");
@@ -128,10 +153,13 @@ export function verifyBundle(bundle: unknown, keySet: KeySet, expectedIssuer?: s
   const raw = keySet.get(kid);
   if (!raw) {
     const envKey = envKid !== kid ? keySet.get(envKid) : undefined;
-    if (envKey && edOk(envKey, sig, msg)) return fail("mismatch", `signed under kid ${envKid} but the payload names kid ${kid}`, kid);
+    const probe = envKey ? signatureMessage(scheme, envKid, msg) : null;
+    if (envKey && probe && edOk(envKey, sig, probe)) return fail("mismatch", `signed under kid ${envKid} but the payload names kid ${kid}`, kid);
     return fail("unknown_key", `no published key for kid ${kid}`, kid);
   }
-  if (!edOk(raw, sig, msg)) return fail("invalid", "signature does not verify over signing_input", kid);
+  const signed = signatureMessage(scheme, kid, msg);
+  if (!signed) return fail("mismatch", "summary record signature on a signing_input small enough to sign directly", kid);
+  if (!edOk(raw, sig, signed)) return fail("invalid", "signature does not verify over signing_input", kid);
 
   if (envKid !== kid) return fail("mismatch", "bundle names a different kid than the signed payload", kid);
   if ((b.alg ?? "Ed25519") !== alg) return fail("mismatch", "bundle algorithm differs from the signed payload", kid);

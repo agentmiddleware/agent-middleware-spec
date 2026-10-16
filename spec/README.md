@@ -19,7 +19,9 @@ breaking changes will bump the version. Propose changes by opening an issue.
 ## Conventions
 
 - **Signature:** Ed25519 over the UTF-8 bytes of `signing_input`, exactly as
-  transmitted. Verifiers must not re-serialize before verifying.
+  transmitted. Verifiers must not re-serialize before verifying. A
+  `signing_input` over 4096 bytes may instead be signed through a summary
+  record; see [Summary record](#summary-record-signing_input-over-4096-bytes).
 - **Canonical JSON (`awi-canonical-json/1`):** object keys sorted at every
   level, no insignificant whitespace (`,` and `:` separators), non-ASCII
   escaped as `\uXXXX`. Credit amounts and timestamps are strings by the time
@@ -29,6 +31,52 @@ breaking changes will bump the version. Propose changes by opening an issue.
   bytes.
 - **`kid`:** the signing key id, inside the signed payload. Key selection uses
   the signed `kid`, never the unauthenticated envelope.
+
+## Summary record (`signing_input` over 4096 bytes)
+
+An issuer may sign a large `signing_input` indirectly. Instead of the payload,
+it signs a small summary record that commits to the payload's SHA-256:
+
+```json
+{"alg":"Ed25519-sha256-envelope","kid":"<kid>","payload_sha256":"<hex>"}
+```
+
+- `kid` is the signing key id, the same value as the signed payload's `kid`.
+- `payload_sha256` is the lowercase hex SHA-256 of the UTF-8 bytes of
+  `signing_input`, exactly as transmitted.
+- The record is serialized with `awi-canonical-json/1` (keys sorted, no
+  whitespace), and the signature is pure Ed25519 (RFC 8032) over those bytes.
+  It is **never** Ed25519ph (pre-hashed); the pre-hash is the SHA-256 inside
+  the record, not a different signature scheme.
+
+The bundle's `signature` field then carries a tag:
+
+```text
+Ed25519-sha256-envelope:<base64 Ed25519 signature over the summary record>
+```
+
+An untagged `signature` is always pure Ed25519 directly over `signing_input`,
+at any size. Standard base64 contains no `:`, so the two forms cannot be
+confused. The signed payload, including its `alg: "Ed25519"`, is identical
+in both forms.
+
+Verification steps:
+
+1. Split `signature` at the first `:`. No `:` means a direct signature.
+   A tag other than `Ed25519-sha256-envelope` means `malformed`.
+2. Select the public key by the signed payload's `kid`, as for any receipt.
+3. Direct: verify the signature over the UTF-8 bytes of `signing_input`.
+4. Summary record: if `signing_input` is 4096 bytes or less, reject with
+   `mismatch`. A small payload has exactly one valid signature form, the
+   direct one. Otherwise compute SHA-256 over the UTF-8 bytes of
+   `signing_input`, rebuild the summary record with that hex digest and the
+   signed `kid`, serialize it canonically, and verify the signature over
+   those bytes. A failed check is `invalid`.
+5. Continue with the usual envelope and `payload_hash` checks.
+
+A tampered payload changes `payload_sha256`, so the rebuilt record differs and
+the signature fails. A verifier that predates this section sees an invalid
+base64 `signature` and fails closed with `malformed`.
 
 ## What a valid signature does and does not prove
 
