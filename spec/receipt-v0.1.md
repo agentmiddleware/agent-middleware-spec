@@ -49,19 +49,9 @@ additive, as for permits.
 | `denied` | Refused before any money moved (permit, policy, approval); not charged |
 | `insufficient_funds` | The charge itself was refused; not charged |
 | `failed_refunded` | Confirmed failure; the debit was refunded |
-| `failed_unrefunded` | A refund was owed and failed; an operator work item exists |
-| `delivery_uncertain` | The dispatch was sent but no trustworthy result came back. The debit is kept, the gateway **never** re-sends on its own, and the operator must reconcile with the downstream system |
+| `failed_unrefunded` | A refund was owed and was not completed |
+| `delivery_uncertain` | The call was dispatched but no trustworthy result came back; the charge stands |
 | `response_rejected` | The downstream responded with something unusable |
-
-
-## Replay rules
-
-- Same idempotency key, same request: the gateway returns the **original**
-  receipt. No second dispatch, no second debit.
-- Same idempotency key, different request: fails closed with an idempotency
-  conflict. No new receipt, no dispatch, no debit.
-- New idempotency key: a new call. An agent that restarts and generates a new
-  key can still cause a second effect; the receipt format cannot prevent that.
 
 ## Verifier statuses
 
