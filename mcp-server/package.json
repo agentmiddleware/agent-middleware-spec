@@ -1,0 +1,35 @@
+{
+  "name": "@agentmiddleware/verify-receipt-mcp",
+  "version": "0.1.0",
+  "description": "Offline MCP server that checks Agent Middleware receipts on your machine.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "mcpName": "io.github.agentmiddleware/agent-middleware-spec",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/agentmiddleware/agent-middleware-spec"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "bin": {
+    "amw-verify-receipt-mcp": "./bin/amw-verify-receipt-mcp.js"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.20.2",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "typescript": "^5.9.3"
+  }
+}
