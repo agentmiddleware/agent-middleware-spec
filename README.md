@@ -1,3 +1,8 @@
+> This repository is archived and no longer maintained.
+> Development continues at [agentmiddleware/agent-middleware](https://github.com/agentmiddleware/agent-middleware).
+> Product site: [agentmiddleware.dev](https://agentmiddleware.dev).
+> Apache 2.0 (gateway is Fair Source, FSL-1.1)
+
 # Agent Middleware Spec
 
 I built this repo so anyone can check an Agent Middleware receipt on their own machine. You need no account, no network call and no trust in me.
